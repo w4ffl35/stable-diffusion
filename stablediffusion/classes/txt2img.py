@@ -162,7 +162,7 @@ class Txt2Img(BaseModel):
         with torch.no_grad():
             with precision_scope("cuda"):
                 with model.ema_scope():
-                    prompts = "a cat"
+                    prompts = data[0]
                     unconditional_conditioning = None
                     if opt.scale != 1.0:
                         unconditional_conditioning = model.get_learned_conditioning(
@@ -172,6 +172,7 @@ class Txt2Img(BaseModel):
                         prompts = list(prompts)
                     c = model.get_learned_conditioning(prompts)
                     shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
+
                     samples_ddim, _ = sampler.sample(
                         S=opt.ddim_steps,
                         conditioning=c,
