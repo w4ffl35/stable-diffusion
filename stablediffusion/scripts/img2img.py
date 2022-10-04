@@ -56,6 +56,16 @@ def load_img(path):
     image = torch.from_numpy(image).cuda().half()
     return 2.*image - 1.
 
+def load_image_from_bytes(image_bytes):
+    image = Image.open(image_bytes).convert("RGB")
+    w, h = image.size
+    print(f"loaded input image of size ({w}, {h})")
+    w, h = map(lambda x: x - x % 32, (w, h))  # resize to integer multiple of 32
+    image = image.resize((w, h), resample=PIL.Image.LANCZOS)
+    image = np.array(image).astype(np.float32) / 255.0
+    image = image[None].transpose(0, 3, 1, 2)
+    image = torch.from_numpy(image).cuda().half()
+    return 2.*image - 1.
 
 def main():
     parser = argparse.ArgumentParser()
@@ -73,20 +83,6 @@ def main():
         type=str,
         nargs="?",
         help="path to the input image"
-    )
-
-    parser.add_argument(
-        "--outdir",
-        type=str,
-        nargs="?",
-        help="dir to write results to",
-        default="outputs/img2img-samples"
-    )
-
-    parser.add_argument(
-        "--skip_grid",
-        action='store_true',
-        help="do not save a grid, only individual samples. Helpful when evaluating lots of samples",
     )
 
     parser.add_argument(
@@ -163,11 +159,6 @@ def main():
         help="strength for noising/unnoising. 1.0 corresponds to full destruction of information in init image",
     )
     parser.add_argument(
-        "--from-file",
-        type=str,
-        help="if specified, load prompts from this file",
-    )
-    parser.add_argument(
         "--config",
         type=str,
         default="configs/stable-diffusion/v1-inference.yaml",
@@ -208,9 +199,6 @@ def main():
     else:
         sampler = DDIMSampler(model)
 
-    os.makedirs(opt.outdir, exist_ok=True)
-    outpath = opt.outdir
-
     batch_size = opt.n_samples
     n_rows = opt.n_rows if opt.n_rows > 0 else batch_size
     if not opt.from_file:
@@ -224,13 +212,11 @@ def main():
             data = f.read().splitlines()
             data = list(chunk(data, batch_size))
 
-    sample_path = os.path.join(outpath, "samples")
-    os.makedirs(sample_path, exist_ok=True)
-    base_count = len(os.listdir(sample_path))
-    grid_count = len(os.listdir(outpath)) - 1
+    #init_image = load_img(opt.init_img).to(device)
 
-    assert os.path.isfile(opt.init_img)
-    init_image = load_img(opt.init_img).to(device)
+    # load init_image from opt.init_img which is an array of bytes
+    init_image = load_img_from_bytes(opt.init_img).to(device)
+
     init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
     init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_image))  # move to latent space
 
@@ -271,17 +257,6 @@ def main():
                                     os.path.join(sample_path, f"{base_count:05}.png"))
                                 base_count += 1
                         all_samples.append(x_samples)
-
-                if not opt.skip_grid:
-                    # additionally, save as grid
-                    grid = torch.stack(all_samples, 0)
-                    grid = rearrange(grid, 'n b c h w -> (n b) c h w')
-                    grid = make_grid(grid, nrow=n_rows)
-
-                    # to image
-                    grid = 255. * rearrange(grid, 'c h w -> h w c').cpu().numpy()
-                    Image.fromarray(grid.astype(np.uint8)).save(os.path.join(outpath, f'grid-{grid_count:04}.png'))
-                    grid_count += 1
 
                 toc = time.time()
 

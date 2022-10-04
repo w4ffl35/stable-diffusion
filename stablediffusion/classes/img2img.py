@@ -1,183 +1,30 @@
-import os
-import random
-import time
 import numpy as np
 import torch
 from torch import autocast
-from PIL import Image
 from contextlib import nullcontext
-from tqdm import tqdm, trange
 from stablediffusion.classes.base import BaseModel
-from einops import rearrange, repeat
-
-def load_img(path):
-    image = Image.open(path).convert("RGB")
-    w, h = image.size
-    print(f"loaded input image of size ({w}, {h}) from {path}")
-    w, h = map(lambda x: x - x % 32, (w, h))  # resize to integer multiple of 32
-    image = image.resize((w, h), resample=Image.LANCZOS)
-    image = np.array(image).astype(np.float32) / 255.0
-    image = image[None].transpose(0, 3, 1, 2)
-    image = torch.from_numpy(image).cuda().half()
-    return 2.*image - 1.
+from einops import repeat
+from stablediffusion.classes.settings import Img2ImgArgs
 
 
 class Img2Img(BaseModel):
-    args = [
-        {
-            "arg": "prompt",
-            "type": str,
-            "nargs": "?",
-            "default": "a painting of a virus monster playing guitar",
-            "help": "the prompt to render"
-        },
-        {
-            "arg": "init_img",
-            "type": str,
-            "nargs": "?",
-            "help": "path to the input image"
-        },
-        {
-            "arg": "outdir",
-            "type": str,
-            "nargs": "?",
-            "help": "dir to write results to",
-            "default": "outputs/img2img-samples"
-        },
-        {
-            "arg": "skip_grid",
-            "action": "store_true",
-            "help": "do not save a grid, only individual samples. Helpful when evaluating lots of samples",
-        },
-        {
-            "arg": "skip_save",
-            "action": "store_true",
-            "help": "do not save indiviual samples. For speed measurements.",
-        },
-        {
-            "arg": "ddim_steps",
-            "type": int,
-            "default": 50,
-            "help": "number of ddim sampling steps",
-        },
-        {
-            "arg": "plms",
-            "action": "store_true",
-            "help": "use plms sampling",
-        },
-        {
-            "arg": "fixed_code",
-            "action": "store_true",
-            "help": "if enabled, uses the same starting code across all samples ",
-        },
-        {
-            "arg": "ddim_eta",
-            "type": float,
-            "default": 0.0,
-            "help": "ddim eta (eta=0.0 corresponds to deterministic sampling",
-        },
-        {
-            "arg": "n_iter",
-            "type": int,
-            "default": 1,
-            "help": "sample this often",
-        },
-        {
-            "arg": "H",
-            "type": int,
-            "default": 512,
-            "help": "image height, in pixel space",
-        },
-        {
-            "arg": "W",
-            "type": int,
-            "default": 512,
-            "help": "image width, in pixel space",
-        },
-        {
-            "arg": "C",
-            "type": int,
-            "default": 4,
-            "help": "latent channels",
-        },
-        {
-            "arg": "f",
-            "type": int,
-            "default": 8,
-            "help": "downsampling factor, most often 8 or 16",
-        },
-        {
-            "arg": "n_samples",
-            "type": int,
-            "default": 2,
-            "help": "how many samples to produce for each given prompt. A.k.a batch size",
-        },
-        {
-            "arg": "n_rows",
-            "type": int,
-            "default": 0,
-            "help": "rows in the grid (default: n_samples)",
-        },
-        {
-            "arg": "scale",
-            "type": float,
-            "default": 5.0,
-            "help": "unconditional guidance scale: eps = eps(x, empty) + scale * (eps(x, cond) - eps(x, empty))",
-        },
-        {
-            "arg": "strength",
-            "type": float,
-            "default": 0.75,
-            "help": "strength for noising/unnoising. 1.0 corresponds to full destruction of information in init image",
-        },
-        {
-            "arg": "from-file",
-            "type": str,
-            "help": "if specified, load prompts from this file",
-        },
-        {
-            "arg": "config",
-            "type": str,
-            "default": "configs/stable-diffusion/v1-inference.yaml",
-            "help": "path to config which constructs model",
-        },
-        {
-            "arg": "ckpt",
-            "type": str,
-            "default": "models/ldm/stable-diffusion-v1/model.ckpt",
-            "help": "path to checkpoint of model",
-        },
-        {
-            "arg": "seed",
-            "type": int,
-            "default": random.randint(0, 100000),
-            # default=42,
-            "help": "the seed (for reproducible sampling)",
-        },
-        {
-            "arg": "precision",
-            "type": str,
-            "help": "evaluate at this precision",
-            "choices": ["full", "autocast"],
-            "default": "autocast"
-        }
-    ]
+    args = Img2ImgArgs
 
-    def sample(self, options=None):
+    def sample(self, options=None, image_handler=None):
+        print("INSIDE IMG2IMG SAMPLE")
         super().sample(options)
         torch.cuda.empty_cache()
         opt = self.opt
-        batch_size = self.batch_size
+        batch_size = 1
         model = self.model
         sampler = self.ddim_sampler
         data = self.data
-        sample_path = self.sample_path
-        base_count = self.base_count
         device = self.device
-        self.set_seed()
+        self.image_handler = image_handler
 
-        assert os.path.isfile(opt.init_img)
-        init_image = load_img(opt.init_img).to(device)
+        # convert opt.init_img to tensor from base64
+        init_image = self.load_image(opt.init_img)
+        init_image = init_image.to(device)
         init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
         init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_image))  # move to latent space
 
@@ -189,39 +36,44 @@ class Img2Img(BaseModel):
 
         precision_scope = autocast if opt.precision == "autocast" else nullcontext
 
-        saved_files = []
         with torch.no_grad():
             with precision_scope("cuda"):
                 with model.ema_scope():
-                    all_samples = list()
+                    prompts = data[0]
                     uc = None
                     if opt.scale != 1.0:
-                        uc = model.get_learned_conditioning(batch_size * [""])
-                    for _n in trange(opt.n_iter, desc="Sampling"):
-                        for prompts in tqdm(data, desc="data"):
-                            if isinstance(prompts, tuple):
-                                prompts = list(prompts)
-                            c = model.get_learned_conditioning(prompts)
+                        uc = model.get_learned_conditioning([""])
+                    if isinstance(prompts, tuple):
+                        prompts = list(prompts)
+                    c = model.get_learned_conditioning(prompts)
+                    z_enc = sampler.stochastic_encode(
+                        init_latent,
+                        torch.tensor([t_enc]).to(device))
+                    self.current_model = model
+                    samples = sampler.decode(
+                        z_enc, c, t_enc,
+                        unconditional_guidance_scale=opt.scale,
+                        unconditional_conditioning=uc,
+                        image_handler=self.current_sample_handler,
+                    )
+                    if self.opt.fast_sample:
+                        data = self.prepare_image(samples, True)
+                        self.image_handler(data)
+                    return True
 
-                            # encode (scaled latent)
-                            z_enc = sampler.stochastic_encode(
-                                init_latent,
-                                torch.tensor([t_enc] * batch_size).to(device))
-                            # decode it
-                            samples = sampler.decode(
-                                z_enc,
-                                c,
-                                t_enc,
-                                unconditional_guidance_scale=opt.scale,
-                                unconditional_conditioning=uc)
+    def load_image(self, image):
+        """
+        :param image: a one dimensional array of a 512x512x3 rgb image (0-255)
+        :return:
+        """
+        # convert image [255, 255, 255, ...] to base64
+        image = np.array(image).reshape(512, 512, 3)
 
-                            x_samples = self.get_first_stage_sample(model, samples)
+        # convert the image to torch tensor
+        image = np.array(image).astype(np.float32) / 255.0
+        image = image[None].transpose(0, 3, 1, 2)
+        image = torch.from_numpy(image).cuda().half()
 
-                            if not opt.skip_save:
-                                saved_files.append(x_samples)
-                                base_count += 1
-
-                            all_samples.append(x_samples)
-                    toc = time.time()
-
-        return saved_files
+        # convert the image to base64
+        image = 2.*image - 1.
+        return image
