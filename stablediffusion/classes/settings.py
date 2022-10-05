@@ -9,6 +9,13 @@ Txt2ImgArgs = [
         "help": "the prompt to render"
     },
     {
+        "arg": "negative_prompt",
+        "type": str,
+        "nargs": "?",
+        "default": "",
+        "help": "words to remove from the image"
+    },
+    {
         "arg": "ddim_steps",
         "type": int,
         "default": 50,
@@ -116,6 +123,13 @@ Img2ImgArgs = [
             "nargs": "?",
             "default": "a painting of a virus monster playing guitar",
             "help": "the prompt to render"
+        },
+        {
+            "arg": "negative_prompt",
+            "type": str,
+            "nargs": "?",
+            "default": "",
+            "help": "words to remove from the image"
         },
         {
             "arg": "init_img",

@@ -16,6 +16,8 @@ class Txt2Img(BaseModel):
         data = self.data
         sampler = self.plms_sampler
         start_code = self.start_code
+        negative_prompt = opt.negative_prompt
+        print("NEGATIVE PROMPT: ", negative_prompt)
         self.image_handler = image_handler
         self.current_sampler = sampler
         self.set_seed()
@@ -28,7 +30,7 @@ class Txt2Img(BaseModel):
                     unconditional_conditioning = None
                     if opt.scale != 1.0:
                         unconditional_conditioning = model.get_learned_conditioning(
-                            [""]
+                            [negative_prompt]
                         )
                     if isinstance(prompts, tuple):
                         prompts = list(prompts)

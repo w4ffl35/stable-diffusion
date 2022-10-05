@@ -20,10 +20,13 @@ class Img2Img(BaseModel):
         sampler = self.ddim_sampler
         data = self.data
         device = self.device
+        negative_prompt = opt.negative_prompt
         self.image_handler = image_handler
 
         # convert opt.init_img to tensor from base64
         init_image = self.load_image(opt.init_img)
+        if init_image is None:
+            return False
         init_image = init_image.to(device)
         init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
         init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_image))  # move to latent space
@@ -33,7 +36,7 @@ class Img2Img(BaseModel):
         assert 0. <= opt.strength <= 1., 'can only work with strength in [0.0, 1.0]'
         t_enc = int(opt.strength * opt.ddim_steps)
         print(f"target t_enc is {t_enc} steps")
-
+        self.set_seed()
         precision_scope = autocast if opt.precision == "autocast" else nullcontext
 
         with torch.no_grad():
@@ -42,7 +45,7 @@ class Img2Img(BaseModel):
                     prompts = data[0]
                     uc = None
                     if opt.scale != 1.0:
-                        uc = model.get_learned_conditioning([""])
+                        uc = model.get_learned_conditioning([negative_prompt])
                     if isinstance(prompts, tuple):
                         prompts = list(prompts)
                     c = model.get_learned_conditioning(prompts)
@@ -67,7 +70,12 @@ class Img2Img(BaseModel):
         :return:
         """
         # convert image [255, 255, 255, ...] to base64
-        image = np.array(image).reshape(512, 512, 3)
+        try:
+            image = np.array(image).reshape(512, 512, 3)
+        except ValueError:
+            print("Image is not the correct shape")
+            print(np.array(image).shape)
+            return None
 
         # convert the image to torch tensor
         image = np.array(image).astype(np.float32) / 255.0
