@@ -7,7 +7,6 @@ from functools import partial
 
 from stablediffusion.ldm.modules.diffusionmodules.util import make_ddim_sampling_parameters, make_ddim_timesteps, noise_like
 
-
 class PLMSSampler(object):
     def __init__(self, model, schedule="linear", **kwargs):
         super().__init__()
@@ -76,6 +75,7 @@ class PLMSSampler(object):
                log_every_t=100,
                unconditional_guidance_scale=1.,
                unconditional_conditioning=None,
+               image_handler=None,
                # this has to come in the same format as the conditioning, # e.g. as encoded tokens, ...
                **kwargs
                ):
@@ -108,6 +108,7 @@ class PLMSSampler(object):
                                                     log_every_t=log_every_t,
                                                     unconditional_guidance_scale=unconditional_guidance_scale,
                                                     unconditional_conditioning=unconditional_conditioning,
+                                                    image_handler=image_handler,
                                                     )
         return samples, intermediates
 
@@ -117,7 +118,7 @@ class PLMSSampler(object):
                       callback=None, timesteps=None, quantize_denoised=False,
                       mask=None, x0=None, img_callback=None, log_every_t=100,
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
-                      unconditional_guidance_scale=1., unconditional_conditioning=None,):
+                      unconditional_guidance_scale=1., unconditional_conditioning=None,image_handler=None,):
         device = self.model.betas.device
         b = shape[0]
         if x_T is None:
@@ -155,7 +156,7 @@ class PLMSSampler(object):
                                       corrector_kwargs=corrector_kwargs,
                                       unconditional_guidance_scale=unconditional_guidance_scale,
                                       unconditional_conditioning=unconditional_conditioning,
-                                      old_eps=old_eps, t_next=ts_next)
+                                      old_eps=old_eps, t_next=ts_next, image_handler=image_handler)
             img, pred_x0, e_t = outs
             old_eps.append(e_t)
             if len(old_eps) >= 4:
@@ -172,7 +173,7 @@ class PLMSSampler(object):
     @torch.no_grad()
     def p_sample_plms(self, x, c, t, index, repeat_noise=False, use_original_steps=False, quantize_denoised=False,
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
-                      unconditional_guidance_scale=1., unconditional_conditioning=None, old_eps=None, t_next=None):
+                      unconditional_guidance_scale=1., unconditional_conditioning=None, old_eps=None, t_next=None, image_handler=None):
         b, *_, device = *x.shape, x.device
 
         def get_model_output(x, t):
@@ -196,7 +197,7 @@ class PLMSSampler(object):
         sqrt_one_minus_alphas = self.model.sqrt_one_minus_alphas_cumprod if use_original_steps else self.ddim_sqrt_one_minus_alphas
         sigmas = self.model.ddim_sigmas_for_original_num_steps if use_original_steps else self.ddim_sigmas
 
-        def get_x_prev_and_pred_x0(e_t, index):
+        def get_x_prev_and_pred_x0(e_t, index, image_handler):
             # select parameters corresponding to the currently considered timestep
             a_t = torch.full((b, 1, 1, 1), alphas[index], device=device)
             a_prev = torch.full((b, 1, 1, 1), alphas_prev[index], device=device)
@@ -213,12 +214,13 @@ class PLMSSampler(object):
             if noise_dropout > 0.:
                 noise = torch.nn.functional.dropout(noise, p=noise_dropout)
             x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
+            image_handler(x_prev)
             return x_prev, pred_x0
 
         e_t = get_model_output(x, t)
         if len(old_eps) == 0:
             # Pseudo Improved Euler (2nd order)
-            x_prev, pred_x0 = get_x_prev_and_pred_x0(e_t, index)
+            x_prev, pred_x0 = get_x_prev_and_pred_x0(e_t, index, image_handler)
             e_t_next = get_model_output(x_prev, t_next)
             e_t_prime = (e_t + e_t_next) / 2
         elif len(old_eps) == 1:
@@ -231,6 +233,6 @@ class PLMSSampler(object):
             # 4nd order Pseudo Linear Multistep (Adams-Bashforth)
             e_t_prime = (55 * e_t - 59 * old_eps[-1] + 37 * old_eps[-2] - 9 * old_eps[-3]) / 24
 
-        x_prev, pred_x0 = get_x_prev_and_pred_x0(e_t_prime, index)
+        x_prev, pred_x0 = get_x_prev_and_pred_x0(e_t_prime, index, image_handler)
 
         return x_prev, pred_x0, e_t

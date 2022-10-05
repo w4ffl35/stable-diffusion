@@ -177,14 +177,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--outdir",
-        type=str,
-        nargs="?",
-        help="dir to write results to",
-        default="outputs/txt2img-samples"
-    )
-
-    parser.add_argument(
         "--skip_grid",
         action='store_true',
         help="do not save a grid, only individual samples. Helpful when evaluating lots of samples",
@@ -256,12 +248,6 @@ if __name__ == "__main__":
         type=float,
         default=5.0,
         help="unconditional guidance scale: eps = eps(x, empty) + scale * (eps(x, cond) - eps(x, empty))",
-    )
-
-    parser.add_argument(
-        "--from-file",
-        type=str,
-        help="if specified, load prompts from this file",
     )
 
     parser.add_argument(

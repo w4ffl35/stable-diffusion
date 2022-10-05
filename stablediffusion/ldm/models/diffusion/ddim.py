@@ -9,6 +9,10 @@ from stablediffusion.ldm.modules.diffusionmodules.util import make_ddim_sampling
 
 
 class DDIMSampler(object):
+    current_image = None
+    current_img = None
+    current_intermediates = None
+
     def __init__(self, model, schedule="linear", **kwargs):
         super().__init__()
         self.model = model
@@ -74,9 +78,11 @@ class DDIMSampler(object):
                log_every_t=100,
                unconditional_guidance_scale=1.,
                unconditional_conditioning=None,
+               image_handler=None,
                # this has to come in the same format as the conditioning, # e.g. as encoded tokens, ...
                **kwargs
                ):
+        self.image_handler = image_handler
         if conditioning is not None:
             if isinstance(conditioning, dict):
                 cbs = conditioning[list(conditioning.keys())[0]].shape[0]
@@ -152,12 +158,17 @@ class DDIMSampler(object):
                                       unconditional_guidance_scale=unconditional_guidance_scale,
                                       unconditional_conditioning=unconditional_conditioning)
             img, pred_x0 = outs
+
             if callback: callback(i)
             if img_callback: img_callback(pred_x0, i)
 
             if index % log_every_t == 0 or index == total_steps - 1:
                 intermediates['x_inter'].append(img)
                 intermediates['pred_x0'].append(pred_x0)
+
+            if self.image_handler:
+                self.image_handler(img)
+
 
         return img, intermediates
 
@@ -220,7 +231,7 @@ class DDIMSampler(object):
 
     @torch.no_grad()
     def decode(self, x_latent, cond, t_start, unconditional_guidance_scale=1.0, unconditional_conditioning=None,
-               use_original_steps=False):
+               use_original_steps=False, image_handler=None):
 
         timesteps = np.arange(self.ddpm_num_timesteps) if use_original_steps else self.ddim_timesteps
         timesteps = timesteps[:t_start]
@@ -233,8 +244,10 @@ class DDIMSampler(object):
         x_dec = x_latent
         for i, step in enumerate(iterator):
             index = total_steps - i - 1
-            ts = torch.full((x_latent.shape[0],), step, device=x_latent.device, dtype=torch.long)
+            ts = torch.full((x_latent.shape[0],), step, device=x_latent.device, dtype=torch.half)
             x_dec, _ = self.p_sample_ddim(x_dec, cond, ts, index=index, use_original_steps=use_original_steps,
                                           unconditional_guidance_scale=unconditional_guidance_scale,
                                           unconditional_conditioning=unconditional_conditioning)
+            if image_handler:
+                image_handler(x_dec)
         return x_dec

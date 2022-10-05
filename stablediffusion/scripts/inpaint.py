@@ -39,12 +39,6 @@ if __name__ == "__main__":
         help="dir containing image-mask pairs (`example.png` and `example_mask.png`)",
     )
     parser.add_argument(
-        "--outdir",
-        type=str,
-        nargs="?",
-        help="dir to write results to",
-    )
-    parser.add_argument(
         "--steps",
         type=int,
         default=50,
