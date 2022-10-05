@@ -81,21 +81,21 @@ class BaseModel:
     :attribute data: data to be used for sampling, set by prepare_data()
     :attribute batch_size: batch size, set by prepare_data()
     :attribute n_rows: number of rows in the output image, set by prepare_data()
-    :attribute outpath: output path, set by initialize_outdir()
-    :attribute sampler: sampler object, set by initialize_sampler()
+
+2    :attribute sampler: sampler object, set by initialize_sampler()
     :attribute device: device to use, set by load_model()
     :attribute model: model object, set by load_model()
-    :attribute wm_encoder: watermark encoder object, set by initialize_watermark()
     :attribute base_count: base count, set by initialize_base_count()
     :attribute grid_count: grid count, set by initialize_grid_count()
-    :attribute sample_path: sample path, set by create_sample_path()
     :attribute start_code: start code, set by initialize_start_code()
     :attribute precision_scope: precision scope, set by set_precision_scope()
     :attribute initialized: whether the model has been initialized, set by initialize()
     """
     args = []
+    current_sampler = None
 
     def __init__(self, *args, **kwargs):
+        self.args = kwargs.get("args", self.args)
         self.opt = {}
         self.initialize_logging()
         self.parser = None
@@ -118,15 +118,8 @@ class BaseModel:
 
     def initialize_logging(self):
         # create path and file if not exist
-        HOME = os.path.expanduser("~")
-        path = f"{HOME}/stablediffusion/stablediffusiond.log"
-        if not os.path.exists(os.path.dirname(path)):
-            os.makedirs(os.path.dirname(path))
-        if not os.path.exists(path):
-            open(path, 'a').close()
         self.log = logging.getLogger(__name__)
         self.log.setLevel(logging.INFO)
-        self.log.addHandler(logging.FileHandler(path))
 
     @property
     def plms_sampler(self):
@@ -143,13 +136,11 @@ class BaseModel:
         """
         if self.initialized:
             return
+        print("initialize")
         self.initialized = True
         self.load_config()
         if not self.model or not self.device:
             self.load_model()
-        self.initialize_outdir()
-        self.initialize_watermark()
-        self.create_sample_path()
         self.initialize_start_code()
 
     def parse_arguments(self):
@@ -172,6 +163,7 @@ class BaseModel:
         :param options: options to parse
         :return:
         """
+        print("parse options")
         for opt in options:
             self.opt.__setattr__(opt[0], opt[1])
 
@@ -180,11 +172,11 @@ class BaseModel:
         Initialize options, by default check for laion400m and set the corresponding options
         :return:
         """
+        print("initialize options")
         if self.opt.__contains__("laion400m") and self.opt.laion400m:
             self.log.info("Falling back to LAION 400M model...")
             self.opt.config = "configs/latent-diffusion/txt2img-1p4B-eval.yaml"
             self.opt.ckpt = "models/ldm/text2img-large/model.ckpt"
-            self.opt.outdir = "outputs/txt2img-samples-laion400m"
 
     def set_seed(self):
         """
@@ -206,30 +198,11 @@ class BaseModel:
         Load the stable diffusion model
         :return:
         """
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         self.model = load_model_from_config(self.config, f"{self.opt.ckpt}")
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self.model = self.model.to(self.device)
-
-    def initialize_outdir(self):
-        """"
-        Initialize the output directory
-        :return:
-        """
-        try:
-            os.makedirs(self.opt.outdir, exist_ok=True)
-        except Exception:
-            pass
-        self.outpath = self.opt.outdir
-
-    def initialize_watermark(self):
-        """
-        Initialize the watermark encoder
-        :return:
-        """
-        self.log.info("Creating invisible watermark encoder (see https://github.com/ShieldMnt/invisible-watermark)...")
-        wm = "StableDiffusionV1"
-        self.wm_encoder = WatermarkEncoder()
-        self.wm_encoder.set_watermark('bytes', wm.encode('utf-8'))
 
     def numpy_to_pil(self, images):
         """
@@ -242,12 +215,14 @@ class BaseModel:
         return pil_images
 
     def check_safety(self, x_image):
+        x_image = x_image.cpu().permute(0, 2, 3, 1).numpy()
         safety_checker_input = safety_feature_extractor(self.numpy_to_pil(x_image), return_tensors="pt")
         x_checked_image, has_nsfw_concept = safety_checker(images=x_image, clip_input=safety_checker_input.pixel_values)
         assert x_checked_image.shape[0] == len(has_nsfw_concept)
         for i in range(len(has_nsfw_concept)):
             if has_nsfw_concept[i]:
                 x_checked_image[i] = load_replacement(x_checked_image[i])
+        x_checked_image = torch.from_numpy(x_checked_image).permute(0, 3, 1, 2)
         return x_checked_image, has_nsfw_concept
 
     def filter_nsfw_content(self, x_samples_ddim):
@@ -260,21 +235,12 @@ class BaseModel:
             x_samples_ddim, has_nsfw = self.check_safety(x_samples_ddim)
         return x_samples_ddim
 
-    def add_watermark(self, img):
-        """
-        Adds digital watermark to image
-        :param img:
-        :return:
-        """
-        if self.opt.do_watermark != "":
-            img = put_watermark(img, self.wm_encoder)
-        return img
-
     def prepare_data(self):
         """
         Prepare data for sampling
         :return:
         """
+        print("prep data")
         batch_size = self.opt.n_samples if "n_samples" in self.opt else 1
         n_rows = self.opt.n_rows if (
                 "n_rows" in self.opt and self.opt.n_rows > 0) else 0
@@ -291,15 +257,6 @@ class BaseModel:
         self.n_rows = n_rows
         self.batch_size = batch_size
         self.data = data
-
-    def create_sample_path(self):
-        """
-        Create the sample path
-        :return:
-        """
-        sample_path = self.outpath
-        os.makedirs(sample_path, exist_ok=True)
-        self.sample_path = sample_path
 
     def initialize_start_code(self):
         """
@@ -344,3 +301,27 @@ class BaseModel:
         self.set_precision_scope()
         self.base_count = len(os.listdir(self.sample_path))
         self.grid_count = len(os.listdir(self.outpath)) - 1
+
+    def current_sample_handler(self, img):
+        if self.opt.fast_sample:
+            data = self.prepare_image_fast(img)
+        else:
+            data = self.prepare_image(img)
+        self.image_handler(data)
+
+    def prepare_image(self, samples_ddim, finalize=False):
+        x_samples_ddim = self.current_model.decode_first_stage(samples_ddim)
+        x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
+
+        # Do safety check here
+        if finalize:
+            x_samples_ddim = self.filter_nsfw_content(x_samples_ddim)
+
+        return self.prepare_image_fast(x_samples_ddim)
+
+    # create the same function as prepare_image, but make it faster
+    # by not using the model to decode the first stage
+    def prepare_image_fast(self, samples_ddim):
+        x_sample = samples_ddim[0]
+        x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
+        return x_sample
