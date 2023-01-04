@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 setup(
     name="stablediffusion",
     py_modules=["stablediffusion"],
-    version="0.3.1",
+    version="0.4.0",
     description="",
     author="w4ffl35 (Joe Curlee)",
     packages=find_packages(exclude=["tests*"]),
@@ -30,7 +30,7 @@ setup(
         "kornia",
         "natsort",
         "taming-transformers",
-        "clip @ git+https://github.com/w4ffl35/CLIP.git#egg=clip",
+        "clip @ git+https://github.com/openai/CLIP.git#egg=clip",
         "albumentations @ git+https://github.com/albumentations-team/albumentations#egg=albumentations",
     ],
     include_package_data=True,

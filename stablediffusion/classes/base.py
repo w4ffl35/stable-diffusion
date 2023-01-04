@@ -21,31 +21,6 @@ from itertools import islice
 # load safety model
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from transformers import AutoFeatureExtractor
-HOME = os.path.expanduser("~")
-safety_model_id = f"{HOME}/stablediffusion/models/CompVis/stable-diffusion-safety-checker"
-safety_feature_extractor = AutoFeatureExtractor.from_pretrained(safety_model_id)
-logging.info("SETTING UP StableDiffusionSafetyChecker FROM PRETRAINED")
-safety_checker = StableDiffusionSafetyChecker.from_pretrained(safety_model_id)
-
-def load_model_from_config(config, ckpt, verbose=False):
-    logging.info(f"Loading model from {ckpt}")
-    pl_sd = torch.load(ckpt, map_location="cpu")
-    if "global_step" in pl_sd:
-        logging.info(f"Global Step: {pl_sd['global_step']}")
-    sd = pl_sd["state_dict"]
-    model = instantiate_from_config(config.model)
-    m, u = model.load_state_dict(sd, strict=False)
-    if len(m) > 0 and verbose:
-        logging.error("missing keys:")
-        logging.error(m)
-    if len(u) > 0 and verbose:
-        logging.error("unexpected keys:")
-        logging.error(u)
-
-    model.cuda().half()
-    model.eval()
-    return model
-
 
 def put_watermark(img, wm_encoder=None):
     if wm_encoder is not None:
@@ -93,6 +68,8 @@ class BaseModel:
     """
     args = []
     current_sampler = None
+    safety_feature_extractor = None
+    safety_checker = None
 
     def __init__(self, *args, **kwargs):
         self.args = kwargs.get("args", self.args)
@@ -113,7 +90,33 @@ class BaseModel:
         self.start_code = None
         self.precision_scope = None
         self.initialized = False
+        self.model_base_path = kwargs.get("model_base_path", "")
+        self.ckpt = kwargs.get("ckpt", None)
+        self.load_safety_model()
         self.init_model(kwargs.get("options", {}))
+
+    def load_safety_model(self):
+        safety_model_id = os.path.join(self.model_base_path, "CompVis/stable-diffusion-safety-checker")
+        self.safety_feature_extractor = AutoFeatureExtractor.from_pretrained(safety_model_id)
+        self.safety_checker = StableDiffusionSafetyChecker.from_pretrained(safety_model_id)
+
+    def load_model_from_config(self, config, ckpt, verbose=False):
+        logging.info(f"Loading model from {ckpt}")
+        pl_sd = torch.load(ckpt, map_location="cpu")
+        if "global_step" in pl_sd:
+            logging.info(f"Global Step: {pl_sd['global_step']}")
+        model = instantiate_from_config(config.model, self.model_base_path)
+        sd = pl_sd["state_dict"]
+        m, u = model.load_state_dict(sd, strict=False)
+        if len(m) > 0 and verbose:
+            logging.error("missing keys:")
+            logging.error(m)
+        if len(u) > 0 and verbose:
+            logging.error("unexpected keys:")
+            logging.error(u)
+        model.cuda().half()
+        model.eval()
+        return model
 
 
     def initialize_logging(self):
@@ -136,7 +139,6 @@ class BaseModel:
         """
         if self.initialized:
             return
-        print("initialize")
         self.initialized = True
         self.load_config()
         if not self.model or not self.device:
@@ -163,20 +165,16 @@ class BaseModel:
         :param options: options to parse
         :return:
         """
-        print("parse options")
-        for opt in options:
-            self.opt.__setattr__(opt[0], opt[1])
+        self.options = options
+        for key,val in options.items():
+            self.opt.__setattr__(key, val)
 
     def initialize_options(self):
         """
         Initialize options, by default check for laion400m and set the corresponding options
         :return:
         """
-        print("initialize options")
-        if self.opt.__contains__("laion400m") and self.opt.laion400m:
-            self.log.info("Falling back to LAION 400M model...")
-            self.opt.config = "configs/latent-diffusion/txt2img-1p4B-eval.yaml"
-            self.opt.ckpt = "models/ldm/text2img-large/model.ckpt"
+        pass
 
     def set_seed(self):
         """
@@ -200,7 +198,7 @@ class BaseModel:
         """
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        self.model = load_model_from_config(self.config, f"{self.opt.ckpt}")
+        self.model = self.load_model_from_config(self.config, f"{self.ckpt}")
         self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         self.model = self.model.to(self.device)
 
@@ -216,8 +214,8 @@ class BaseModel:
 
     def check_safety(self, x_image):
         x_image = x_image.cpu().permute(0, 2, 3, 1).numpy()
-        safety_checker_input = safety_feature_extractor(self.numpy_to_pil(x_image), return_tensors="pt")
-        x_checked_image, has_nsfw_concept = safety_checker(images=x_image, clip_input=safety_checker_input.pixel_values)
+        safety_checker_input = self.safety_feature_extractor(self.numpy_to_pil(x_image), return_tensors="pt")
+        x_checked_image, has_nsfw_concept = self.safety_checker(images=x_image, clip_input=safety_checker_input.pixel_values)
         assert x_checked_image.shape[0] == len(has_nsfw_concept)
         for i in range(len(has_nsfw_concept)):
             if has_nsfw_concept[i]:
@@ -240,7 +238,6 @@ class BaseModel:
         Prepare data for sampling
         :return:
         """
-        print("prep data")
         batch_size = self.opt.n_samples if "n_samples" in self.opt else 1
         n_rows = self.opt.n_rows if (
                 "n_rows" in self.opt and self.opt.n_rows > 0) else 0
@@ -302,12 +299,15 @@ class BaseModel:
         self.base_count = len(os.listdir(self.sample_path))
         self.grid_count = len(os.listdir(self.outpath)) - 1
 
+    reqtype = None
     def current_sample_handler(self, img):
         if self.opt.fast_sample:
             data = self.prepare_image_fast(img)
         else:
             data = self.prepare_image(img)
-        self.image_handler(data)
+        options = self.options
+        options["reqtype"] = self.reqtype
+        self.image_handler(data, options)
 
     def prepare_image(self, samples_ddim, finalize=False):
         x_samples_ddim = self.current_model.decode_first_stage(samples_ddim)
