@@ -5,7 +5,7 @@ from functools import partial
 import clip
 from einops import repeat
 from transformers import CLIPTokenizer, CLIPTextModel
-from ldm.modules.x_transformer import Encoder, TransformerWrapper  # TODO: can we directly rely on lucidrains code and simply add this as a reuirement? --> test
+from stablediffusion.ldm.modules.x_transformer import Encoder, TransformerWrapper  # TODO: can we directly rely on lucidrains code and simply add this as a reuirement? --> test
 
 
 class AbstractEncoder(nn.Module):
@@ -137,16 +137,14 @@ class SpatialRescaler(nn.Module):
 
 class FrozenCLIPEmbedder(AbstractEncoder):
     """Uses the CLIP transformer encoder for text (from Hugging Face)"""
-    def __init__(self, version="openai/clip-vit-large-patch14", device="cuda", max_length=77):
+    def __init__(self, version="openai/clip-vit-large-patch14", device="cuda", max_length=77, model_base_path=None):
         super().__init__()
-        HOME = os.path.expanduser("~")
-        print("SETTING UP TOKENIZER FROM PRETRAINED")
+        self.model_base_path = model_base_path
         self.tokenizer = CLIPTokenizer.from_pretrained(
-            os.path.join(HOME, 'stablediffusion/models', version),
+            os.path.join(self.model_base_path, version),
         )
-        print("SETTING UP TRANSFORMER FROM PRETRAINED")
         self.transformer = CLIPTextModel.from_pretrained(
-            os.path.join(HOME, 'stablediffusion/models', version)
+            os.path.join(self.model_base_path, version)
         )
         self.device = device
         self.max_length = max_length

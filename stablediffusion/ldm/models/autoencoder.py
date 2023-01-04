@@ -3,9 +3,9 @@ import pytorch_lightning as pl
 import torch.nn.functional as F
 from contextlib import contextmanager
 from taming.modules.vqvae.quantize import VectorQuantizer
-from ldm.modules.diffusionmodules.model import Encoder, Decoder
-from ldm.modules.distributions.distributions import DiagonalGaussianDistribution
-from ldm.util import instantiate_from_config
+from stablediffusion.ldm.modules.diffusionmodules.model import Encoder, Decoder
+from stablediffusion.ldm.modules.distributions.distributions import DiagonalGaussianDistribution
+from stablediffusion.ldm.util import instantiate_from_config
 
 
 class VQModel(pl.LightningModule):
@@ -289,12 +289,13 @@ class AutoencoderKL(pl.LightningModule):
                  image_key="image",
                  colorize_nlabels=None,
                  monitor=None,
+                 model_base_path=None
                  ):
         super().__init__()
         self.image_key = image_key
         self.encoder = Encoder(**ddconfig)
         self.decoder = Decoder(**ddconfig)
-        self.loss = instantiate_from_config(lossconfig)
+        self.loss = instantiate_from_config(lossconfig, model_base_path)
         assert ddconfig["double_z"]
         self.quant_conv = torch.nn.Conv2d(2*ddconfig["z_channels"], 2*embed_dim, 1)
         self.post_quant_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)

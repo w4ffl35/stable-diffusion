@@ -9,6 +9,7 @@ from stablediffusion.classes.settings import Img2ImgArgs
 
 class Img2Img(BaseModel):
     args = Img2ImgArgs
+    reqtype = "img2img"
 
     def sample(self, options=None, image_handler=None):
         print("INSIDE IMG2IMG SAMPLE")

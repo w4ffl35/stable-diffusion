@@ -8,6 +8,10 @@ from contextlib import nullcontext
 class Txt2Img(BaseModel):
     args = Txt2ImgArgs
     current_model = None
+    reqtype = "txt2img"
+
+    def current_sample_handler_pass(self, image):
+        pass
 
     def sample(self, options=None, image_handler=None):
         super().sample(options)
@@ -47,9 +51,8 @@ class Txt2Img(BaseModel):
                         unconditional_conditioning=unconditional_conditioning,
                         eta=opt.ddim_eta,
                         x_T=start_code,
-                        image_handler=self.current_sample_handler,
+                        image_handler=self.current_sample_handler_pass,
                     )
-                    if self.opt.fast_sample:
-                        data = self.prepare_image(samples_ddim, True)
-                        self.image_handler(data)
-                    return True
+                    data = self.prepare_image(samples_ddim, True)
+                    # self.image_handler(data, options)
+                    return data
