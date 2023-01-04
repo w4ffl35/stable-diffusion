@@ -3,7 +3,7 @@ import pkg_resources
 from setuptools import setup, find_packages
 
 setup(
-    name="stablediffusion",
+    name="stable-diffusion",
     py_modules=["stablediffusion"],
     version="0.3.1",
     description="",
