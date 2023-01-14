@@ -1,4 +1,5 @@
 import random
+import os
 
 Txt2ImgArgs = [
     {

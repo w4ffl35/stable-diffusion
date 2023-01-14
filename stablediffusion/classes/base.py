@@ -182,6 +182,7 @@ class BaseModel:
         This allows us to re-seed the model with a new seed that can remain static or be modified, e.g. when sampling.
         :return:
         """
+        print(self.opt)
         seed_everything(self.opt.seed)
 
     def load_config(self):
@@ -189,6 +190,7 @@ class BaseModel:
         Load config file
         :return:
         """
+        print(self.opt)
         self.config = OmegaConf.load(f"{self.opt.config}")
 
     def load_model(self):

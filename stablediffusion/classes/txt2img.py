@@ -3,6 +3,9 @@ from stablediffusion.classes.base import BaseModel
 from stablediffusion.classes.settings import Txt2ImgArgs
 from torch import autocast
 from contextlib import nullcontext
+from PIL import Image
+import numpy as np
+import io
 
 
 class Txt2Img(BaseModel):
@@ -10,11 +13,22 @@ class Txt2Img(BaseModel):
     current_model = None
     reqtype = "txt2img"
 
-    def current_sample_handler_pass(self, image):
-        pass
+    def image_to_byte_array(self, image):
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
+        return img_byte_arr
+
+    def current_sample_handler_pass(self, samples):
+        img = self.prepare_image_fast(samples)
+        img = img.astype(np.uint8)
+        img = Image.fromarray(img)
+        img = self.image_to_byte_array(img)
+        self.image_handler(img, self.options)
 
     def sample(self, options=None, image_handler=None):
         super().sample(options)
+        self.options = options
         opt = self.opt
         model = self.model
         data = self.data
